@@ -1,187 +1,272 @@
 'use client'
-
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 export default function Home() {
   const [words, setWords] = useState([])
-  const [filteredWords, setFilteredWords] = useState([])
-  const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [relevanceFilter, setRelevanceFilter] = useState('')
   const [updatingIds, setUpdatingIds] = useState(new Set())
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null) // { added }
 
-  // Fetch words from API
+  // Sorting state
+  const [sortField, setSortField] = useState('word')
+  const [sortDir, setSortDir] = useState('asc') // 'asc' | 'desc'
+
+  // Initial load
   useEffect(() => {
-    fetchWords()
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await fetch('/api/words', { cache: 'no-store' })
+        const data = await res.json()
+        if (data.success) setWords(data.words)
+      } catch (e) {
+        console.error('Failed to load words', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
   }, [])
 
-  // Filter words based on search term
-  useEffect(() => {
-    if (searchTerm.trim() === '') {
-      setFilteredWords(words)
-    } else {
-      const filtered = words.filter(word =>
-        word.word.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        word.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (word.type && word.type.toLowerCase().includes(searchTerm.toLowerCase()))
-      )
-      setFilteredWords(filtered)
-    }
-  }, [words, searchTerm])
+  const uniqueTypes = useMemo(() => Array.from(new Set(words.map(w => w.type).filter(Boolean))).sort(), [words])
+  const uniqueRelevance = useMemo(() => Array.from(new Set(words.map(w => w.relevance).filter(Boolean))).sort(), [words])
 
-  const fetchWords = async () => {
-    try {
-      setLoading(true)
-      const response = await fetch('/api/words')
-      const data = await response.json()
-      
-      if (data.success) {
-        setWords(data.words)
-      } else {
-        console.error('Failed to fetch words:', data.error)
-      }
-    } catch (error) {
-      console.error('Error fetching words:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const markAsReviewed = async (wordId) => {
-    try {
-      setUpdatingIds(prev => new Set([...prev, wordId]))
-      
-      const response = await fetch('/api/update-review', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ wordId }),
-      })
-
-      const data = await response.json()
-      
-      if (data.success) {
-        // Update the word in local state
-        setWords(prevWords => 
-          prevWords.map(word => 
-            word.id === wordId 
-              ? { ...word, lastReview: new Date().toISOString() }
-              : word
-          )
-        )
-      } else {
-        console.error('Failed to update review:', data.error)
-      }
-    } catch (error) {
-      console.error('Error updating review:', error)
-    } finally {
-      setUpdatingIds(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(wordId)
-        return newSet
-      })
-    }
-  }
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Never reviewed'
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+  // Filter + search
+  const filtered = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase()
+    return words.filter(w => {
+      const passType = !typeFilter || w.type === typeFilter
+      const passRel = !relevanceFilter || w.relevance === relevanceFilter
+      const passSearch = term === '' ||
+        w.word?.toLowerCase().includes(term) ||
+        w.description?.toLowerCase().includes(term) ||
+        w.example?.toLowerCase().includes(term)
+      return passType && passRel && passSearch
     })
+  }, [words, searchTerm, typeFilter, relevanceFilter])
+
+  // Sort
+  const sorted = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    const arr = [...filtered]
+    arr.sort((a, b) => {
+      const va = getFieldValue(a, sortField)
+      const vb = getFieldValue(b, sortField)
+      if (va == null && vb == null) return 0
+      if (va == null) return -1 * dir
+      if (vb == null) return 1 * dir
+
+      // Date sort for lastReview
+      if (sortField === 'lastReview') {
+        const da = va ? new Date(va).getTime() : 0
+        const db = vb ? new Date(vb).getTime() : 0
+        return da === db ? 0 : (da < db ? -1 * dir : 1 * dir)
+      }
+
+      // Numeric sort for reviewCount
+      if (sortField === 'reviewCount') {
+        const na = Number(va) || 0
+        const nb = Number(vb) || 0
+        return na === nb ? 0 : (na < nb ? -1 * dir : 1 * dir)
+      }
+
+      // String sort default
+      const sa = String(va).toLowerCase()
+      const sb = String(vb).toLowerCase()
+      return sa === sb ? 0 : (sa < sb ? -1 * dir : 1 * dir)
+    })
+    return arr
+  }, [filtered, sortField, sortDir])
+
+  function getFieldValue(row, field) {
+    switch (field) {
+      case 'word': return row.word
+      case 'type': return row.type
+      case 'description': return row.description
+      case 'example': return row.example
+      case 'relevance': return row.relevance
+      case 'reviewCount': return row.reviewCount
+      case 'lastReview': return row.lastReview
+      default: return row.word
+    }
   }
 
-  const getStats = () => {
-    const total = words.length
-    const reviewed = words.filter(word => word.lastReview).length
-    const unreviewed = total - reviewed
-    return { total, reviewed, unreviewed }
+  function toggleSort(field) {
+    if (sortField === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
   }
 
-  const stats = getStats()
+  const formatDate = (iso) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return '—'
+    return d.toLocaleDateString()
+  }
 
-  if (loading) {
-    return (
-      <div className="container">
-        <div className="loading">Loading your words...</div>
-      </div>
-    )
+  const syncFromNotion = async () => {
+    try {
+      setSyncing(true)
+      setSyncResult(null)
+      const oldIds = new Set(words.map(w => w.id))
+      const res = await fetch('/api/words', { cache: 'no-store' })
+      const data = await res.json()
+      if (!data.success) {
+        setSyncResult({ added: 0 })
+        return
+      }
+      const fresh = data.words || []
+      const added = fresh.filter(w => !oldIds.has(w.id)).length
+      setWords(fresh)
+      setSyncResult({ added })
+    } catch (e) {
+      console.error('Sync error', e)
+      setSyncResult({ added: 0 })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const markAsReviewed = async (word) => {
+    try {
+      setUpdatingIds(prev => new Set([...prev, word.id]))
+      const res = await fetch('/api/update-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pageId: word.id, wordName: word.word })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setWords(prev => prev.map(w =>
+          w.id === word.id
+            ? { ...w, reviewCount: (w.reviewCount || 0) + 1, lastReview: data.lastReviewISO || new Date().toISOString() }
+            : w
+        ))
+      } else {
+        console.error('Update review failed', data.error)
+      }
+    } catch (e) {
+      console.error('Update review error', e)
+    } finally {
+      setUpdatingIds(prev => { const s = new Set(prev); s.delete(word.id); return s })
+    }
   }
 
   return (
-    <div className="container">
-      <div className="header">
-        <h1>Words Dashboard</h1>
-        <p>Master your vocabulary with focused review sessions</p>
-      </div>
-
-      <div className="stats">
-        <div className="stat-card">
-          <span className="stat-number">{stats.total}</span>
-          <span className="stat-label">Total Words</span>
+    <main style={{ maxWidth: 1200, margin: '32px auto', padding: '0 16px', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Words Dashboard</h1>
+          <p style={{ margin: '6px 0 0', color: '#555' }}>Review, sort and filter your Notion words</p>
         </div>
-        <div className="stat-card">
-          <span className="stat-number">{stats.unreviewed}</span>
-          <span className="stat-label">Need Review</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-number">{stats.reviewed}</span>
-          <span className="stat-label">Reviewed</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={syncFromNotion}
+            disabled={syncing}
+            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ddd', cursor: syncing ? 'not-allowed' : 'pointer' }}
+          >
+            {syncing ? 'Syncing…' : 'Sync from Notion'}
+          </button>
         </div>
       </div>
 
-      <div className="search-container">
-        <input
-          type="text"
-          placeholder="Search words, descriptions, or types..."
-          className="search-input"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-      </div>
-
-      {filteredWords.length === 0 ? (
-        <div className="no-results">
-          {searchTerm ? 'No words found matching your search.' : 'No words available.'}
-        </div>
-      ) : (
-        <div className="words-grid">
-          {filteredWords.map((word) => (
-            <div key={word.id} className="word-card">
-              <h2 className="word-title">{word.word}</h2>
-              
-              {word.type && (
-                <span className="word-type">{word.type}</span>
-              )}
-
-              <p className="word-description">{word.description}</p>
-
-              {word.example && (
-                <div className="word-example">
-                  <strong>Example:</strong> {word.example}
-                </div>
-              )}
-
-              <div className="word-meta">
-                <span>Relevance: {word.relevance || 'Not set'}</span>
-                <span>Last Review: {formatDate(word.lastReview)}</span>
-              </div>
-
-              <button
-                className="review-button"
-                onClick={() => markAsReviewed(word.id)}
-                disabled={updatingIds.has(word.id)}
-              >
-                {updatingIds.has(word.id) ? 'Updating...' : 'Mark as Reviewed'}
-              </button>
-            </div>
-          ))}
+      {syncResult && (
+        <div style={{ marginTop: 10, padding: '8px 10px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
+          {syncResult.added === 0 ? 'No new words found.' : `${syncResult.added} new ${syncResult.added === 1 ? 'word' : 'words'} added.`}
         </div>
       )}
-    </div>
+
+      {/* Controls */}
+      <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          placeholder="Search word / description / example"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{ flex: '1 1 320px', minWidth: 240, padding: 8, borderRadius: 6, border: '1px solid #ddd' }}
+          aria-label="Search"
+        />
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} aria-label="Filter by type" style={{ padding: 8, borderRadius: 6, border: '1px solid #ddd' }}>
+          <option value="">Type: All</option>
+          {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={relevanceFilter} onChange={e => setRelevanceFilter(e.target.value)} aria-label="Filter by relevance" style={{ padding: 8, borderRadius: 6, border: '1px solid #ddd' }}>
+          <option value="">Relevance: All</option>
+          {uniqueRelevance.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+
+      {/* Table */}
+      <div style={{ marginTop: 16, border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+            <thead style={{ position: 'sticky', top: 0, background: '#fafafa', zIndex: 1 }}>
+              <tr>
+                {headerCell('Word', 'word', sortField, sortDir, toggleSort)}
+                {headerCell('Type', 'type', sortField, sortDir, toggleSort)}
+                {headerCell('Description', 'description', sortField, sortDir, toggleSort)}
+                {headerCell('Example', 'example', sortField, sortDir, toggleSort)}
+                {headerCell('Relevance', 'relevance', sortField, sortDir, toggleSort)}
+                {headerCell('Reviewed', 'reviewCount', sortField, sortDir, toggleSort)}
+                {headerCell('Last review', 'lastReview', sortField, sortDir, toggleSort)}
+                <th style={thStyle}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={8} style={{ padding: 16 }}>Loading…</td></tr>
+              ) : (
+                sorted.map((w, idx) => (
+                  <tr key={w.id} style={{ background: idx % 2 ? '#fff' : '#fcfcfc' }}>
+                    <td style={tdStyle}><strong>{w.word || 'Untitled'}</strong></td>
+                    <td style={tdStyle}>{w.type || '—'}</td>
+                    <td style={tdStyle}>{w.description || '—'}</td>
+                    <td style={tdStyle}>{w.example || '—'}</td>
+                    <td style={tdStyle}>{w.relevance || '—'}</td>
+                    <td style={tdStyle}>{typeof w.reviewCount === 'number' ? w.reviewCount : 0}</td>
+                    <td style={tdStyle}>{formatDate(w.lastReview)}</td>
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => markAsReviewed(w)}
+                        disabled={updatingIds.has(w.id)}
+                        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', cursor: updatingIds.has(w.id) ? 'not-allowed' : 'pointer' }}
+                      >
+                        {updatingIds.has(w.id) ? 'Updating…' : 'Mark as reviewed'}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  )
+}
+
+const thStyle = { textAlign: 'left', padding: '10px 12px', borderBottom: '1px solid #eee', position: 'sticky', top: 0 }
+const tdStyle = { padding: '8px 12px', borderBottom: '1px solid #f1f1f1', verticalAlign: 'top' }
+
+function headerCell(label, field, sortField, sortDir, onClick) {
+  const isActive = sortField === field
+  const arrow = isActive ? (sortDir === 'asc' ? '▲' : '▼') : ''
+  return (
+    <th style={thStyle}>
+      <button
+        onClick={() => onClick(field)}
+        style={{ background: 'transparent', border: 0, padding: 0, font: 'inherit', cursor: 'pointer' }}
+        aria-label={`Sort by ${label}`}
+      >
+        {label} {arrow}
+      </button>
+    </th>
   )
 }
