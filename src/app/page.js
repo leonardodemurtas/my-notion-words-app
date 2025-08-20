@@ -35,7 +35,7 @@ export default function Home() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await fetch('/api/words', { cache: 'no-store' })
+        const res = await fetch(`/api/words?ts=${Date.now()}`, { cache: 'no-store' })
         const data = await res.json()
         if (data.success) setWords(data.words)
       } catch (e) {
@@ -125,7 +125,7 @@ export default function Home() {
       setSyncing(true)
       setSyncResult(null)
       const oldIds = new Set(words.map(w => w.id))
-      const res = await fetch('/api/words', { cache: 'no-store' })
+      const res = await fetch(`/api/words?ts=${Date.now()}`, { cache: 'no-store' })
       const data = await res.json()
       if (!data.success) { setSyncResult({ added: 0 }); return }
       const fresh = data.words || []
@@ -169,7 +169,10 @@ export default function Home() {
     <main style={{ maxWidth: 1200, margin: '32px auto', padding: '0 16px', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h1 style={{ margin: 0 }}>Words Dashboard</h1>
+          <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Words Dashboard
+            <span style={countPillStyle} aria-label="Total words">{words.length}</span>
+          </h1>
           <p style={{ margin: '6px 0 0', color: '#555' }}>Review, sort and filter your Notion words</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -269,6 +272,16 @@ export default function Home() {
 
 const thStyle = { textAlign: 'left', padding: '10px 12px', borderBottom: '1px solid #eee', position: 'sticky', top: 0 }
 const tdStyle = { padding: '8px 12px', borderBottom: '1px solid #f1f1f1', verticalAlign: 'top' }
+
+// 👇 Add this here
+const countPillStyle = {
+  border: '1px solid #e5e7eb',
+  borderRadius: 999,
+  padding: '2px 8px',
+  fontSize: 12,
+  background: '#f3f4f6',
+  color: '#111827'
+}
 
 // Desktop chip/badge styles to match mobile cards
 const chipStyle = {

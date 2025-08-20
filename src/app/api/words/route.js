@@ -1,6 +1,10 @@
 import { Client } from '@notionhq/client'
 import { NextResponse } from 'next/server'
 
+// 🚫 Disable caching for this route
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const notion = new Client({ auth: process.env.NOTION_TOKEN })
 
 function extractTitle(properties) {
@@ -30,7 +34,8 @@ async function fetchAllPages(databaseId) {
       database_id: databaseId,
       start_cursor: cursor,
       page_size: 100,
-      sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }]
+      // no filters — get everything
+      sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
     })
     results.push(...(res.results || []))
     cursor = res.has_more ? res.next_cursor : undefined
@@ -42,35 +47,40 @@ export async function GET() {
   try {
     const databaseId = process.env.NOTION_DB_ID
     if (!process.env.NOTION_TOKEN || !databaseId) {
-      return NextResponse.json({ success: false, error: 'Missing NOTION_TOKEN or NOTION_DB_ID' }, { status: 500 })
+      return NextResponse.json(
+        { success: false, error: 'Missing NOTION_TOKEN or NOTION_DB_ID' },
+        { status: 500 }
+      )
     }
 
     const pages = await fetchAllPages(databaseId)
 
     const words = pages.map(page => {
-      const properties = page.properties || {}
-
-      // Support both Select and Multi-select for the "Type" property
-      const typeValue = (properties.Type?.select?.name) ||
-        (Array.isArray(properties.Type?.multi_select)
-          ? properties.Type.multi_select.map(o => o?.name).filter(Boolean).join(', ')
+      const p = page.properties || {}
+      const typeValue =
+        (p.Type?.select?.name) ||
+        (Array.isArray(p.Type?.multi_select)
+          ? p.Type.multi_select.map(o => o?.name).filter(Boolean).join(', ')
           : '') || ''
 
       return {
         id: page.id,
-        word: extractTitle(properties),
+        word: extractTitle(p),
         type: typeValue,
-        description: getText(properties.Description?.rich_text),
-        example: getText(properties.Example?.rich_text),
-        relevance: properties.Relevance?.select?.name || '',
-        checkbox: !!properties.Checkbox?.checkbox,
-        createdTime: page.created_time || properties['Created time']?.created_time || '',
-        lastReview: properties.LastReview?.date?.start || null,
-        reviewCount: typeof properties.ReviewCount?.number === 'number' ? properties.ReviewCount.number : 0,
+        description: getText(p.Description?.rich_text),
+        example: getText(p.Example?.rich_text),
+        relevance: p.Relevance?.select?.name || '',
+        checkbox: !!p.Checkbox?.checkbox,
+        createdTime: page.created_time || p['Created time']?.created_time || '',
+        lastReview: p.LastReview?.date?.start || null,
+        reviewCount: typeof p.ReviewCount?.number === 'number' ? p.ReviewCount.number : 0,
       }
     })
 
-    return NextResponse.json({ success: true, words })
+    const res = NextResponse.json({ success: true, words })
+    // Extra guard against any proxy caching:
+    res.headers.set('Cache-Control', 'no-store')
+    return res
   } catch (error) {
     console.error('Error fetching words:', error)
     return NextResponse.json({ success: false, error: 'Failed to fetch words from Notion' }, { status: 500 })
