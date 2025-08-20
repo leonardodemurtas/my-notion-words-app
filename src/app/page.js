@@ -169,11 +169,11 @@ export default function Home() {
     <main style={{ maxWidth: 1200, margin: '32px auto', padding: '0 16px', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, color: '#E1E4EA' }}>
             Words Dashboard
             <span style={countPillStyle} aria-label="Total words">{words.length}</span>
           </h1>
-          <p style={{ margin: '6px 0 0', color: '#555' }}>Review, sort and filter your Notion words</p>
+          <p style={{ margin: '6px 0 0', color: '#96A0B6' }}>Review, sort and filter your Notion words</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={syncFromNotion} disabled={syncing}
